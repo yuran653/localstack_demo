@@ -12,46 +12,83 @@ s3_client = boto3.client(
 
 BUCKET_NAME = 'mybucket'
 
-# Add a delay to ensure LocalStack is fully initialized
-time.sleep(5)
+def initialize_bucket():
+    """Ensure the bucket is created and ready to use."""
+    try:
+        s3_client.create_bucket(
+            Bucket=BUCKET_NAME,
+            CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'}  # Set to your preferred region (Thailand)
+        )
+        st.write(f"Bucket '{BUCKET_NAME}' created successfully!")
+    except (s3_client.exceptions.BucketAlreadyOwnedByYou, s3_client.exceptions.BucketAlreadyExists):
+        st.write(f"Bucket '{BUCKET_NAME}' already exists.")
+    except Exception:
+        time.sleep(1)
 
-# Attempt to create the bucket in LocalStack
-try:
-    s3_client.create_bucket(
-        Bucket=BUCKET_NAME,
-        CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'}  # Set to your preferred region (Thailand)
-    )
-    st.write(f"Bucket '{BUCKET_NAME}' created successfully!")
-except (s3_client.exceptions.BucketAlreadyOwnedByYou, s3_client.exceptions.BucketAlreadyExists):
-    st.write(f"Bucket '{BUCKET_NAME}' already exists.")
+def upload_file(uploaded_file):
+    """Upload a file to the S3 bucket."""
+    try:
+        s3_client.upload_fileobj(uploaded_file, BUCKET_NAME, uploaded_file.name)
+        st.success(f'File {uploaded_file.name} uploaded successfully!')
+    except Exception as e:
+        st.error(f"Failed to upload file {uploaded_file.name}: {e}")
 
-st.title('File Management with Streamlit and LocalStack')
+def list_files():
+    """List files in the S3 bucket."""
+    try:
+        files = s3_client.list_objects_v2(Bucket=BUCKET_NAME).get('Contents', [])
+        return [file['Key'] for file in files]
+    except Exception as e:
+        st.error(f"Failed to list files: {e}")
+        return []
 
-# Upload File
-uploaded_file = st.file_uploader('Upload a file', type=['txt', 'pdf', 'png', 'jpg', 'jpeg'])
-if uploaded_file is not None:
-    s3_client.upload_fileobj(uploaded_file, BUCKET_NAME, uploaded_file.name)
-    st.success(f'File {uploaded_file.name} uploaded successfully!')
+def delete_file(file_name):
+    """Delete a file from the S3 bucket."""
+    try:
+        s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_name)
+        st.success(f'File {file_name} deleted successfully!')
+    except Exception as e:
+        st.error(f"An error occurred while deleting file {file_name}: {e}")
 
-# List files
-st.subheader('Files in the bucket:')
-files = s3_client.list_objects_v2(Bucket=BUCKET_NAME).get('Contents', [])
-file_list = [file['Key'] for file in files]
+def download_file(file_name):
+    """Generate a presigned URL to download a file from the S3 bucket."""
+    try:
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': BUCKET_NAME, 'Key': file_name},
+            ExpiresIn=3600  # URL expires in 1 hour
+        )
+        return presigned_url
+    except Exception as e:
+        st.error(f"An error occurred while generating the download link for {file_name}: {e}")
+        return None
 
-for file_name in file_list:
-    st.write(file_name)
+def main():
+    st.title('File Management with Streamlit and LocalStack')
 
-    # Generate the presigned URL using localstack service name
-    presigned_url = s3_client.generate_presigned_url('get_object', Params={'Bucket': BUCKET_NAME, 'Key': file_name}, ExpiresIn=3600)
+    # Initialize the bucket
+    initialize_bucket()
+
+    # Upload File
+    uploaded_file = st.file_uploader('Upload a file', type=['pdf'])
+    if uploaded_file is not None:
+        with st.spinner('Uploading file...'):
+            upload_file(uploaded_file)
     
-    st.markdown(f"[Download {file_name}]({presigned_url})")
+    # List files
+    st.subheader('Files in the bucket:')
+    file_list = list_files()
+    
+    for file_name in file_list:
+        st.write(file_name)
+        presigned_url = download_file(file_name)
+        if presigned_url:
+            st.markdown(f"[Download {file_name}]({presigned_url})")
 
-    # Delete button
-    if st.button(f'Delete {file_name}'):
-        try:
-            s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_name)
-            st.success(f'File {file_name} deleted successfully!')
-            # Refresh file list after deletion
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"An error occurred while deleting file {file_name}: {e}")
+        if st.button(f'Delete {file_name}'):
+            with st.spinner(f'Deleting {file_name}...'):
+                delete_file(file_name)
+                # Refresh file list after deletion
+                st.experimental_rerun()
+                
+main()

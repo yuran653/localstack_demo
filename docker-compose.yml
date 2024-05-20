@@ -5,12 +5,10 @@ services:
     image: localstack/localstack
     ports:
       - "4566:4566"
-      - "4571:4571"
     environment:
       - SERVICES=s3
-    volumes:
-      - localstack_data:/data
-      - localstack_s3_data:/localstack_s3_data
+    # volumes:
+    #   - ./data:/tmp/localstack/data
 
   streamlit:
     build: .
@@ -26,7 +24,3 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=ap-southeast-1
-
-volumes:
-  localstack_data:
-  localstack_s3_data:

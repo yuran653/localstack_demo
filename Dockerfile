@@ -1,5 +1,6 @@
 FROM python:3.9-slim
-RUN pip install streamlit boto3
+RUN pip install --upgrade pip \
+    && pip install streamlit boto3
 COPY . /app
 WORKDIR /app
 EXPOSE 8501
