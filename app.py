@@ -1,94 +1,121 @@
-import streamlit as st
+import sys
+import os.path
 import boto3
-import time
+from botocore.exceptions import ClientError
 
-# Initialize the S3 client to interact with LocalStack
-s3_client = boto3.client(
-    's3',
-    endpoint_url='http://localstack:4566',  # Use the service name defined in docker-compose.yml
-    aws_access_key_id='test',
-    aws_secret_access_key='test',
-)
+def initializeS3Client(end_point):
+    try:
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=end_point,
+            aws_access_key_id='test',
+            aws_secret_access_key='test',
+        )
+        sys.stdout.write("S3 client initialized successfully\n")
+        return s3_client
+    except ClientError as e:
+        sys.stderr.write(f"S3 client initialization error: {e}\n")
+        return None
+    except Exception as e:
+        sys.stderr.write(f"An unexpected error occurred while S3 client initialization: {e}\n")
+        return None
 
-BUCKET_NAME = 'mybucket'
-
-def initialize_bucket():
-    """Ensure the bucket is created and ready to use."""
+def initializeBucket(s3_client, bucket_name):
     try:
         s3_client.create_bucket(
-            Bucket=BUCKET_NAME,
-            CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'}  # Set to your preferred region (Thailand)
+            Bucket=bucket_name,
+            CreateBucketConfiguration={'LocationConstraint': 'ap-southeast-1'}
         )
-        st.write(f"Bucket '{BUCKET_NAME}' created successfully!")
-    except (s3_client.exceptions.BucketAlreadyOwnedByYou, s3_client.exceptions.BucketAlreadyExists):
-        st.write(f"Bucket '{BUCKET_NAME}' already exists.")
-    except Exception:
-        time.sleep(1)
-
-def upload_file(uploaded_file):
-    """Upload a file to the S3 bucket."""
-    try:
-        s3_client.upload_fileobj(uploaded_file, BUCKET_NAME, uploaded_file.name)
-        st.success(f'File {uploaded_file.name} uploaded successfully!')
+        sys.stdout.write(f"Bucket '{bucket_name}' created successfully!\n")
+    except ClientError as e:
+        if e.response['Error']['Code'] == "BucketAlreadyOwnedByYou":
+            sys.stderr.write(f"Bucket '{bucket_name}' is already created!\n")
+        else:
+            sys.stderr.write(f"Bucket error: {e.response['Error']['Code']}\n")
     except Exception as e:
-        st.error(f"Failed to upload file {uploaded_file.name}: {e}")
+        sys.stderr.write(f"An unexpected error occurred while bucket '{bucket_name}' creation: {e}\n")
 
-def list_files():
-    """List files in the S3 bucket."""
+def listBuckets(s3_client):
+    print('Existing buckets:')
+    for bucket in s3_client.list_buckets()['Buckets']:
+        print(f'{bucket["Name"]}')
+
+def listFiles(s3_client, bucket_name):
+    print('Files in the bucket:')
     try:
-        files = s3_client.list_objects_v2(Bucket=BUCKET_NAME).get('Contents', [])
-        return [file['Key'] for file in files]
+        files = s3_client.list_objects_v2(Bucket=bucket_name).get('Contents', [])
+        for file_name in [file['Key'] for file in files]:
+            print(file_name)
+    except ClientError as e:
+        sys.stderr.write(f"Failed to list files: {e}\n")
     except Exception as e:
-        st.error(f"Failed to list files: {e}")
-        return []
+        sys.stderr.write(f"An unexpected error occurred while listing files: {e}\n")
 
-def delete_file(file_name):
-    """Delete a file from the S3 bucket."""
+def uploadFile(s3_client, bucket_name, file_path):
     try:
-        s3_client.delete_object(Bucket=BUCKET_NAME, Key=file_name)
-        st.success(f'File {file_name} deleted successfully!')
+        with open(file_path, 'rb') as fileobj:
+            s3_client.upload_fileobj(fileobj, bucket_name, os.path.basename(fileobj.name))
+        sys.stdout.write(f"File '{fileobj.name}' uploaded successfully!\n")
+    except FileNotFoundError as e:
+        sys.stderr.write(f"File at path '{file_path}' not found\n")
+    except ClientError as e:
+        sys.stderr.write(f"Failed to upload file '{os.path.basename(fileobj.name)}': {e}\n")
     except Exception as e:
-        st.error(f"An error occurred while deleting file {file_name}: {e}")
+        sys.stderr.write(f"An unexpected error occurred while uploading '{os.path.basename(fileobj.name)}': {e}\n")
 
-def download_file(file_name):
-    """Generate a presigned URL to download a file from the S3 bucket."""
+def deleteFile(s3_client, bucket_name, file_name):
+    try:
+        s3_client.delete_object(Bucket=bucket_name, Key=file_name)
+        sys.stdout.write(f"File '{file_name}' deleted successfully!\n")
+    except ClientError as e:
+        sys.stderr.write(f"An error occurred while deleting file '{file_name}': {e}\n")
+    except Exception as e:
+        sys.stderr.write(f"An unexpected error occurred while deleting file '{file_name}': {e}\n")
+
+def getDownloadURL(s3_client, bucket_name, file_name):
     try:
         presigned_url = s3_client.generate_presigned_url(
             'get_object',
-            Params={'Bucket': BUCKET_NAME, 'Key': file_name},
+            Params={'Bucket': bucket_name, 'Key': file_name},
             ExpiresIn=3600  # URL expires in 1 hour
         )
+        sys.stdout.write(f"Generation of a presigned URL to download a file {file_name} is successful\n")
         return presigned_url
+    except ClientError as e:
+        sys.stderr.write(f"An error occurred while generating the download link for {file_name}: {e}\n")
+        return None
     except Exception as e:
-        st.error(f"An error occurred while generating the download link for {file_name}: {e}")
+        sys.stderr.write(f"An unexpected error occurred while generating the download link for {file_name}: {e}\n")
         return None
 
 def main():
-    st.title('File Management with Streamlit and LocalStack')
+    end_point = 'http://localhost:4566' # change endpoint to the proper one
+    s3_client = initializeS3Client(end_point)
+    if s3_client:
+        try:
+            # Initialize the bucket
+            bucket_name = 'mybucket'
+            initializeBucket(s3_client, bucket_name)
 
-    # Initialize the bucket
-    initialize_bucket()
+            # Output the existing buckets' names
+            listBuckets(s3_client)
+        
+            # # Upload the file
+            # file_path = './tmp/example2.txt'
+            # uploadFile(s3_client, bucket_name, file_path)
+            
+            # List files
+            listFiles(s3_client, bucket_name)
+            
+            # # Delete the file
+            # file_name = 'name'
+            # deleteFile(s3_client, bucket_name, file_name)
+            
+            # # Download the file
+            # file_name = 'example.txt'
+            # print(getDownloadURL(s3_client, bucket_name, file_name))
 
-    # Upload File
-    uploaded_file = st.file_uploader('Upload a file', type=['pdf'])
-    if uploaded_file is not None:
-        with st.spinner('Uploading file...'):
-            upload_file(uploaded_file)
-    
-    # List files
-    st.subheader('Files in the bucket:')
-    file_list = list_files()
-    
-    for file_name in file_list:
-        st.write(file_name)
-        presigned_url = download_file(file_name)
-        if presigned_url:
-            st.markdown(f"[Download {file_name}]({presigned_url})")
-
-        if st.button(f'Delete {file_name}'):
-            with st.spinner(f'Deleting {file_name}...'):
-                delete_file(file_name)
-                # Refresh file list after deletion
-                st.experimental_rerun()
-                
+        except Exception as e:
+            sys.stderr.write(f"Error in main: {e}\n")
 main()
+        
